@@ -1,0 +1,15 @@
+{
+  "name": "obsidian-image-enlarge",
+  "version": "1.0.0",
+  "description": "Simple image enlarge plugin for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "esbuild": "0.17.3",
+    "obsidian": "latest",
+    "typescript": "4.7.4"
+  }
+}
