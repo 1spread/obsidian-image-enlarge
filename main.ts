@@ -1,8 +1,10 @@
-import { Notice, Plugin, Scope } from 'obsidian';
+import { FileSystemAdapter, Notice, Plugin, Scope } from 'obsidian';
 
 const IMG_SELECTOR = `.workspace-leaf-content[data-type='markdown'] img:not(a img), .workspace-leaf-content[data-type='image'] img`;
 const ZOOM_FACTOR = 0.8;
 const IMG_VIEW_MIN = 30;
+const BUTTON_AREA_HEIGHT = 100; // bottom button group clearance
+const MAX_CANVAS_DIM = 8192;
 
 interface ImgInfo {
   curWidth: number;
@@ -16,8 +18,9 @@ interface ImgInfo {
 export default class ImageEnlargePlugin extends Plugin {
   private overlayEl: HTMLDivElement | null = null;
   private imgInfo: ImgInfo = { curWidth: 0, curHeight: 0, realWidth: 0, realHeight: 0, left: 0, top: 0 };
-  private currentImgSrc = '';
   private overlayScope: Scope | null = null;
+  private overlayAbortController: AbortController | null = null;
+  private rafId: number | null = null;
 
   private handleImageClick = (evt: MouseEvent, delegateTarget: HTMLImageElement) => {
     if (this.overlayEl) return;
@@ -25,7 +28,7 @@ export default class ImageEnlargePlugin extends Plugin {
     this.openOverlay(delegateTarget.src);
   };
 
-  async onload() {
+  onload() {
     // Delegated click handler — bubble phase, no interference with Obsidian internals
     document.on('click', IMG_SELECTOR, this.handleImageClick);
     this.register(() => document.off('click', IMG_SELECTOR, this.handleImageClick));
@@ -37,7 +40,6 @@ export default class ImageEnlargePlugin extends Plugin {
 
   private openOverlay(src: string) {
     if (this.overlayEl) return;
-    this.currentImgSrc = src;
 
     // Create overlay
     const overlay = document.createElement('div');
@@ -67,20 +69,28 @@ export default class ImageEnlargePlugin extends Plugin {
     overlay.appendChild(btnGroup);
     document.body.appendChild(overlay);
 
-    // Wait for image to load, then calculate fit size
-    const realImg = new Image();
-    realImg.src = src;
-    realImg.onload = () => {
-      this.calculateFitSize(realImg, imgView);
-    };
-    if (realImg.complete) {
-      this.calculateFitSize(realImg, imgView);
+    // Use imgView load event to calculate fit size (avoids double-loading)
+    if (imgView.complete && imgView.naturalWidth > 0) {
+      this.calculateFitSize(imgView);
+    } else {
+      imgView.onload = () => {
+        if (!this.overlayEl) return; // guard: overlay may have closed before image loaded
+        this.calculateFitSize(imgView);
+      };
     }
+
+    // AbortController for batch event listener cleanup
+    const controller = new AbortController();
+    this.overlayAbortController = controller;
+    const { signal } = controller;
+
+    // Prevent accidental drag
+    imgView.addEventListener('dragstart', (e) => e.preventDefault(), { signal });
 
     // Close on background click
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) this.closeOverlay();
-    });
+    }, { signal });
 
     // Keyboard via Obsidian Scope — integrates with Keymap system
     this.overlayScope = new Scope();
@@ -98,7 +108,7 @@ export default class ImageEnlargePlugin extends Plugin {
     });
     this.app.keymap.pushScope(this.overlayScope);
 
-    // Mousewheel zoom
+    // Mousewheel zoom with RAF throttling to prevent layout thrashing
     imgView.addEventListener('wheel', (e) => {
       e.preventDefault();
       const zoomIn = e.deltaY < 0;
@@ -106,44 +116,48 @@ export default class ImageEnlargePlugin extends Plugin {
       const rect = imgView.getBoundingClientRect();
       const offsetX = e.clientX - rect.left;
       const offsetY = e.clientY - rect.top;
-      this.zoom(ratio, { offsetX, offsetY });
-      this.applyTransform(imgView);
-    });
+      if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = null;
+        this.zoom(ratio, { offsetX, offsetY });
+        this.applyTransform(imgView);
+      });
+    }, { signal });
 
     // Copy button
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.copyImageToClipboard(imgView);
-    });
+    }, { signal });
 
     // Copy Path button
     copyPathBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.copyImagePath(src);
-    });
+    }, { signal });
   }
 
-  private calculateFitSize(realImg: HTMLImageElement, imgView: HTMLImageElement) {
+  private calculateFitSize(imgView: HTMLImageElement) {
     const winW = document.documentElement.clientWidth;
-    const winH = document.documentElement.clientHeight - 100;
+    const winH = document.documentElement.clientHeight - BUTTON_AREA_HEIGHT;
     const zoomW = winW * ZOOM_FACTOR;
     const zoomH = winH * ZOOM_FACTOR;
 
-    let w = realImg.naturalWidth, h = realImg.naturalHeight;
+    let w = imgView.naturalWidth, h = imgView.naturalHeight;
     if (h > zoomH) {
       h = zoomH;
-      w = h / realImg.naturalHeight * realImg.naturalWidth;
+      w = h / imgView.naturalHeight * imgView.naturalWidth;
       if (w > zoomW) w = zoomW;
     } else if (w > zoomW) {
       w = zoomW;
     }
-    h = w * realImg.naturalHeight / realImg.naturalWidth;
+    h = w * imgView.naturalHeight / imgView.naturalWidth;
 
     this.imgInfo = {
       curWidth: w,
       curHeight: h,
-      realWidth: realImg.naturalWidth,
-      realHeight: realImg.naturalHeight,
+      realWidth: imgView.naturalWidth,
+      realHeight: imgView.naturalHeight,
       left: (winW - w) / 2,
       top: (winH - h) / 2,
     };
@@ -180,6 +194,8 @@ export default class ImageEnlargePlugin extends Plugin {
         newH = IMG_VIEW_MIN;
         newW = newH * info.realWidth / info.realHeight;
       }
+      info.curWidth = newW;
+      info.curHeight = newH;
       return;
     }
 
@@ -191,10 +207,9 @@ export default class ImageEnlargePlugin extends Plugin {
 
   private applyTransform(imgView: HTMLImageElement) {
     const info = this.imgInfo;
-    imgView.style.width = info.curWidth + 'px';
-    imgView.style.height = info.curHeight + 'px';
-    imgView.style.left = info.left + 'px';
-    imgView.style.top = info.top + 'px';
+    imgView.style.width = `${info.curWidth}px`;
+    imgView.style.height = `${info.curHeight}px`;
+    imgView.style.transform = `translate(${info.left}px, ${info.top}px)`;
   }
 
   private copyImagePath(src: string): void {
@@ -202,7 +217,9 @@ export default class ImageEnlargePlugin extends Plugin {
     try {
       const url = new URL(src);
       const decodedPath = decodeURIComponent(url.pathname);
-      const vaultBasePath = (this.app.vault.adapter as any).basePath as string;
+      const vaultBasePath = this.app.vault.adapter instanceof FileSystemAdapter
+        ? this.app.vault.adapter.getBasePath()
+        : null;
       if (vaultBasePath && decodedPath.includes(vaultBasePath)) {
         const idx = decodedPath.indexOf(vaultBasePath);
         path = decodedPath.substring(idx + vaultBasePath.length);
@@ -222,26 +239,37 @@ export default class ImageEnlargePlugin extends Plugin {
 
   private copyImageToClipboard(imgView: HTMLImageElement): void {
     const image = new Image();
-    image.crossOrigin = 'anonymous';
+    const isFileUrl = imgView.src.startsWith('file:');
+    if (!isFileUrl) {
+      image.crossOrigin = 'anonymous';
+    }
     image.src = imgView.src;
     image.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
+      let w = image.naturalWidth;
+      let h = image.naturalHeight;
+      if (w > MAX_CANVAS_DIM || h > MAX_CANVAS_DIM) {
+        const scale = Math.min(MAX_CANVAS_DIM / w, MAX_CANVAS_DIM / h);
+        w = Math.floor(w * scale);
+        h = Math.floor(h * scale);
+      }
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image, 0, 0);
+      ctx.drawImage(image, 0, 0, w, h);
       try {
         canvas.toBlob(async (blob) => {
+          canvas.width = 0; // release GPU memory
           if (!blob) {
             new Notice('Failed to copy image');
             return;
           }
           try {
             await navigator.clipboard.write([
-              new ClipboardItem({ 'image/png': blob })
+              new ClipboardItem({ 'image/png': blob }),
             ]);
             new Notice('Image copied');
           } catch {
@@ -259,6 +287,14 @@ export default class ImageEnlargePlugin extends Plugin {
   }
 
   private closeOverlay() {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    if (this.overlayAbortController) {
+      this.overlayAbortController.abort();
+      this.overlayAbortController = null;
+    }
     if (this.overlayScope) {
       this.app.keymap.popScope(this.overlayScope);
       this.overlayScope = null;

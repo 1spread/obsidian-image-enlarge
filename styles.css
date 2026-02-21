@@ -17,6 +17,8 @@
 
 .image-enlarge-view {
   position: absolute;
+  top: 0;
+  left: 0;
   cursor: grab;
   max-width: none;
   max-height: none;
