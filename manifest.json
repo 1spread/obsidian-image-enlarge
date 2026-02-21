@@ -1,9 +1,1 @@
-{
-  "id": "obsidian-image-enlarge",
-  "name": "Image Enlarge",
-  "version": "1.0.0",
-  "minAppVersion": "0.15.0",
-  "description": "Click to enlarge images with zoom and copy to clipboard",
-  "author": "das",
-  "isDesktopOnly": true
-}
+{"id":"obsidian-image-enlarge","name":"Image Enlarge","version":"1.0.0","minAppVersion":"0.15.0","description":"Click to enlarge images with zoom and copy to clipboard","author":"das","isDesktopOnly":true}

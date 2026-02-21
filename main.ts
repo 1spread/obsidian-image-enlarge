@@ -22,16 +22,22 @@ export default class ImageEnlargePlugin extends Plugin {
   private overlayAbortController: AbortController | null = null;
   private rafId: number | null = null;
 
-  private handleImageClick = (evt: MouseEvent, delegateTarget: HTMLImageElement) => {
+  private handleImageClick = (evt: MouseEvent) => {
+    const target = evt.target as HTMLElement;
+    const img = target instanceof HTMLImageElement
+      ? target
+      : target.closest('img');
+    if (!img || !(img instanceof HTMLImageElement)) return;
+    if (!img.matches(IMG_SELECTOR)) return;
     if (this.overlayEl) return;
     evt.preventDefault();
-    this.openOverlay(delegateTarget.src);
+    evt.stopPropagation(); // Obsidian 側のハンドラが画像を別ペインで開くのを防ぐ
+    this.openOverlay(img.src);
   };
 
   onload() {
-    // Delegated click handler — bubble phase, no interference with Obsidian internals
-    document.on('click', IMG_SELECTOR, this.handleImageClick);
-    this.register(() => document.off('click', IMG_SELECTOR, this.handleImageClick));
+    // capture: true — Obsidian/CM6 の stopPropagation より先に発火
+    this.registerDomEvent(document, 'click', this.handleImageClick, true);
   }
 
   onunload() {
