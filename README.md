@@ -11,7 +11,7 @@ A minimal Obsidian plugin for enlarging images. Click any image in your notes to
 
 ## Demo
 
-![demo](https://github.com/user-attachments/assets/placeholder-demo.gif)
+<!-- TODO: Add demo GIF after recording -->
 
 ## Installation
 
@@ -23,7 +23,7 @@ A minimal Obsidian plugin for enlarging images. Click any image in your notes to
 
 ### Manual Installation
 
-1. Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](https://github.com/daisuke-ignite/obsidian-image-enlarge/releases/latest)
+1. Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](https://github.com/1spread/obsidian-image-enlarge/releases/latest)
 2. Create a folder `obsidian-image-enlarge` in your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into the folder
 4. Reload Obsidian and enable the plugin in **Settings** → **Community plugins**
@@ -38,6 +38,7 @@ A minimal Obsidian plugin for enlarging images. Click any image in your notes to
 | Click background | Close overlay |
 | `Escape` | Close overlay |
 | Click "Copy" button | Copy image to clipboard |
+| `Cmd/Ctrl + Shift + C` | Copy image path to clipboard |
 
 ## Why This Plugin?
 
